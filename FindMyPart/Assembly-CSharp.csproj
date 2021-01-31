@@ -65,11 +65,11 @@
   <ItemGroup>
     <Compile Include="Assets\Scripts\CameraPostRender.cs" />
     <Compile Include="Assets\Scripts\GameController.cs" />
-    <Compile Include="Assets\Scripts\GameStateInfo.cs" />
+    <Compile Include="Assets\Scripts\GameInfo.cs" />
+    <Compile Include="Assets\Scripts\MapBuilder.cs" />
     <Compile Include="Assets\Scripts\PlayerController.cs" />
-    <Compile Include="Assets\Scripts\PlayerStateInfo.cs" />
+    <Compile Include="Assets\Scripts\PlayerInfo.cs" />
     <None Include="Assets\Shaders\ColoredWatchShader.shader" />
-    <None Include="Assets\Shaders\SkyShader.hlsl" />
     <None Include="Assets\SkySerie Freebie\Hdri setup.txt" />
     <Reference Include="Unity.TextMeshPro.Editor">
       <HintPath>E:/Git/FindMyPart/FindMyPart/Library/ScriptAssemblies/Unity.TextMeshPro.Editor.dll</HintPath>
