@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 
 using UnityEngine;
+using UnityEngine.UI;
 
 public class PrefabInfo
 {
@@ -44,11 +45,6 @@ public class SpawnInfo
             this.YPosition,// + this.YSize * (this.Scale.y - 1) * 0.5f,
             gameInfo.ZTop + this.ZStart * gameInfo.TileHeight + this.ZSize * (this.Scale.z - 1) * 0.5f
         );
-
-
-        /*if (ShouldRotate)
-            gameObject.transform.rotation = Quaternion.EulerAngles(0, 90, 0);*/
-        //gameObject.transform.Rotate(0, ShouldRotate ? 90 : 0, 0);
     }
 }
 
@@ -67,6 +63,10 @@ public class GameController : MonoBehaviour {
     public GameObject[] SmallObstacles;
     public float[] SmallObstaclesYs;
 
+    public GameObject[] Details;
+    public int DetailsAmount;
+    public int FindAmount;
+
     public int Width;
     public int Height;
 
@@ -77,12 +77,32 @@ public class GameController : MonoBehaviour {
     public float ZTop;
 
     public bool[,] Maze;
+    public float MaxTakeRange;
 
+    public Text PressEText;
+    public Text TasksText;
+    public Text WellDoneText;
+
+    private AudioSource PlayerAudioSource;
+
+    public AudioClip StepsAudio;
+    public AudioClip DetailAudio;
+    public AudioClip LightAudio;
+
+    private Dictionary<GameObject, GameObject> Origins;
+    private Dictionary<GameObject, Color> DetailColors;
     private Dictionary<GameObject, PrefabInfo> PrefabInfos;
+
+    private Dictionary<GameObject, int> Taken;
+    private Dictionary<GameObject, int> FindTask;
+    private Dictionary<GameObject, int> SpawnedCount;
+
     private System.Random _Random = new System.Random();
 
     // Use this for initialization
     void Start () {
+        this.WellDoneText.enabled = false;
+        this.PressEText.enabled = false;
         Cursor.visible = false;
 
         PrefabInfos = new Dictionary<GameObject, PrefabInfo>();
@@ -99,7 +119,13 @@ public class GameController : MonoBehaviour {
         this._GameInfo.ZTop = this.ZTop;
 
         this.Player = GameObject.Find("Robot");
+        this.PlayerAudioSource = this.Player.GetComponent<AudioSource>();
         this._PlayerController = Player.GetComponent<PlayerController>();
+
+        this._PlayerController.OnColorChanged += _PlayerController_OnColorChanged;
+        this._PlayerController.TryTakeDetail += _PlayerController_TryTakeDetail;
+        this._PlayerController.OnMoved += _PlayerController_OnMoved;
+        this._PlayerController.OnStopped += _PlayerController_OnStopped;
 
         MapBuilder builder = new MapBuilder();
         builder.GetRandomMapOfSize(Height, Width);
@@ -107,24 +133,192 @@ public class GameController : MonoBehaviour {
 
         this.SpawnMaze();
 
-        int i = 0, j = 0;
-        for (; i < Height; ++i)
+        List<(int x, int y)> emptyPoints = new List<(int x, int y)>();
+        for (int i = 0; i < Height; ++i)
         {
-            for (; j < Width; ++j)
-                if(!Maze[i, j])
-                    break;
-
-            if (!Maze[i, j])
-                break;
+            for (int j = 0; j < Width; ++j)
+            {
+                if (!Maze[i, j])
+                    emptyPoints.Add((j, i));
+            }
         }
 
-        this.Player.transform.position = new Vector3(j * this._GameInfo.TileWidth, -8.94f, i * this._GameInfo.TileHeight);
+        if (emptyPoints.Count != 0)
+        {
+            (int x, int y) robotPoint = this.GetRandomItem(emptyPoints);
+
+            this.Player.transform.position = new Vector3(
+                this._GameInfo.XLeft - robotPoint.x * this._GameInfo.TileWidth, -6.85f,
+                this._GameInfo.ZTop + robotPoint.y * this._GameInfo.TileHeight
+            );
+        }
+
+        DetailColors = new Dictionary<GameObject, Color>();
+        SpawnedCount = new Dictionary<GameObject, int>();
+        Origins = new Dictionary<GameObject, GameObject>();
+        Taken = new Dictionary<GameObject, int>();
+
+        for(int k = 0; k < DetailsAmount; ++k)
+        {
+            GameObject randomDetail = GetRandomItem(Details);
+            (int x, int z) detailPoint = GetRandomItem(emptyPoints);
+
+            float dx = (float)this._Random.NextDouble();
+            float dz = (float)this._Random.NextDouble();
+
+            Vector3 position = new Vector3(
+                this._GameInfo.XLeft - (detailPoint.x + dx) * this._GameInfo.TileWidth,
+                -5,
+                this._GameInfo.ZTop + (detailPoint.z + dz) * this._GameInfo.TileHeight
+            );
+
+            int colorRand = this._Random.Next(0, 3);
+
+            Color color = Color.red;
+            if (colorRand == 1)
+                color = Color.green;
+            else if (colorRand == 2)
+                color = Color.blue;
+
+            GameObject detail = GameObject.Instantiate(randomDetail);
+            detail.transform.position = position;
+
+            DetailColors.Add(detail, color);
+
+            if (!SpawnedCount.ContainsKey(randomDetail))
+                SpawnedCount.Add(randomDetail, 0);
+
+            SpawnedCount[randomDetail]++;
+            Origins.Add(detail, randomDetail);
+        }
+
+        int leftFindAmount = this.FindAmount;
+        FindTask = new Dictionary<GameObject, int>();
+        foreach(GameObject obj in Details)
+        {
+            int count = this._Random.Next(0, Math.Min(leftFindAmount, this.SpawnedCount[obj]));
+            FindTask.Add(obj, count);
+            leftFindAmount -= count;
+        }
+
+        this.HandleColorChange();
+        this.UpdateTaskList();
 	}
-	
-	// Update is called once per frame
-	void Update () {
-		
-	}
+
+    private void _PlayerController_OnStopped(object sender, EventArgs e)
+    {
+        if (this.PlayerAudioSource.isPlaying && this.PlayerAudioSource.clip == this.StepsAudio)
+            this.PlayerAudioSource.Stop();
+    }
+
+    private void _PlayerController_OnMoved(object sender, EventArgs e)
+    {
+        this.PressEText.enabled = this.GetNearestDetail() != null;
+
+        if (!this.PlayerAudioSource.isPlaying)
+        {
+            this.PlayerAudioSource.clip = this.StepsAudio;
+            this.PlayerAudioSource.Play();
+        }
+    }
+
+    private void _PlayerController_TryTakeDetail(object sender, EventArgs e)
+    {
+        GameObject nearest = this.GetNearestDetail();
+
+        if (nearest == null)
+            return;
+
+        GameObject origin = this.Origins[nearest];
+
+        if (!Taken.ContainsKey(origin))
+            Taken.Add(origin, 0);
+        Taken[origin]++;
+
+        this.DetailColors.Remove(nearest);
+        this.Origins.Remove(nearest);
+
+        GameObject.Destroy(nearest);
+
+        this.UpdateTaskList();
+        this.CheckFinish();
+
+        this.PressEText.enabled = this.GetNearestDetail() != null;
+
+        if (!this.PlayerAudioSource.isPlaying)
+        {
+            this.PlayerAudioSource.clip = this.DetailAudio;
+            this.PlayerAudioSource.Play();
+        }
+    }
+
+    private void UpdateTaskList()
+    {
+        string[] tasks = this.FindTask
+            .Where(task => task.Value != 0)
+            .Select(task => $"{task.Key.name}: {(this.Taken.ContainsKey(task.Key) ? this.Taken[task.Key] : 0)}/{task.Value}")
+            .ToArray();
+
+        this.TasksText.text = string.Join(
+            "\n", tasks
+        );
+    }
+
+    private void CheckFinish()
+    {
+        bool finished = this.FindTask.All(
+            task => task.Value <= (this.Taken.ContainsKey(task.Key) ? this.Taken[task.Key] : 0)
+        );
+
+        if (finished)
+            this.WellDoneText.enabled = true;
+    }
+
+    private GameObject GetNearestDetail()
+    {
+        if (!this._PlayerController.CurrentColor.HasValue)
+            return null;
+
+        Dictionary<GameObject, float> orderedDetails = this.DetailColors
+            .Where(kvp => this.DetailColors[kvp.Key] == this._PlayerController.CurrentColor.Value)
+            .ToDictionary(
+                kvp => kvp.Key, 
+                kvp => (kvp.Key.transform.position - this.Player.transform.position).magnitude
+            ).OrderBy(kvp => kvp.Value).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+        return orderedDetails.FirstOrDefault(kvp => kvp.Value <= MaxTakeRange).Key;
+    }
+
+    private void _PlayerController_OnColorChanged(object sender, EventArgs e)
+    {
+        this.HandleColorChange();
+
+        if (!this.PlayerAudioSource.isPlaying)
+        {
+            this.PlayerAudioSource.clip = this.LightAudio;
+            this.PlayerAudioSource.Play();
+        }
+    }
+
+    private void HandleColorChange()
+    {
+        List<GameObject> visible = this.DetailColors.Where(
+            kvp => this._PlayerController.CurrentColor.HasValue && kvp.Value == this._PlayerController.CurrentColor.Value
+        ).Select(kvp => kvp.Key).ToList();
+
+        List<GameObject> invisible = this.DetailColors.Keys.Except(visible).ToList();
+
+        foreach (GameObject obj in visible)
+            obj.SetActive(true);
+
+        foreach (GameObject obj in invisible)
+            obj.SetActive(false);
+    }
+
+    // Update is called once per frame
+    void Update () {
+        
+    }
 
     private void SpawnMaze()
     {
@@ -149,7 +343,7 @@ public class GameController : MonoBehaviour {
                 for (int di = i; di < height && Maze[di, j] && !done[di, j]; ++di)
                     ++lineHeight;
 
-                for (int dj = j; dj < width && Maze[j, dj] && !done[j, dj]; ++dj)
+                for (int dj = j; dj < width && Maze[i, dj] && !done[i, dj]; ++dj)
                     ++lineWidth;
 
                 if (lineWidth > lineHeight)

@@ -1,7 +1,4 @@
-﻿using System.Collections;
-using System.Collections.Generic;
-
-using UnityEngine;
+﻿using UnityEngine;
 
 public class CameraPostRender : MonoBehaviour {
     private Camera _Camera { get; set; }
@@ -11,8 +8,8 @@ public class CameraPostRender : MonoBehaviour {
 	void Start () {
         _Camera = this.GetComponent<Camera>();
         _Shader = Shader.Find("Custom/ColoredWatchShader");
-
-        Shader.SetGlobalColor(Shader.PropertyToID("_Light"), new Color(1.0f, 0.0f, 0.0f, 0.1f));
+        
+        Shader.SetGlobalColor(Shader.PropertyToID("_Light"), Color.white);
         _Camera.SetReplacementShader(_Shader, null);
 	}
 	
@@ -20,4 +17,9 @@ public class CameraPostRender : MonoBehaviour {
 	void Update () {
         
 	}
+
+    public void SetColor(Color? color)
+    {
+        Shader.SetGlobalColor(Shader.PropertyToID("_Light"), color.HasValue ? color.Value : Color.white);
+    }
 }
